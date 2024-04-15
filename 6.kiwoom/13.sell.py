@@ -1,10 +1,11 @@
 from PyQt5.QAxContainer import QAxWidget
 from PyQt5.QtCore import QEventLoop
 from PyQt5.QtWidgets import QApplication
-import time
+import sys, time
 import pandas as pd
-import numpy as np
 import fidDic
+import numpy as np
+import pickle
 from sklearn.ensemble import RandomForestRegressor
 
 class Kiwoom(QAxWidget):
@@ -12,7 +13,13 @@ class Kiwoom(QAxWidget):
         super().__init__()
         self.regKey()
         self.regHandlers()
-        self.login()
+        self.login()        
+        try:
+            f = open('best.dat', 'rb')
+            self.best = pickle.load(f)
+            f.close()
+        except:
+            self.best = {}
     
     def regKey(self):
         self.setControl('KHOPENAPI.KHOpenAPICtrl.1')
@@ -20,7 +27,34 @@ class Kiwoom(QAxWidget):
     def regHandlers(self):
         self.OnEventConnect.connect(self.onLogin)
         self.OnReceiveTrData.connect(self.onResponse)
-        self.OnReceiveMsg.connect(self.onMsg)       
+        self.OnReceiveMsg.connect(self.onMsg)
+        self.OnReceiveChejanData.connect(self.onAfterOrder)
+        self.OnReceiveRealData.connect(self.onReal)
+    
+    def setReal(self, screenno, stockCodes, fid, optType):
+        self.SetRealReg(screenno, stockCodes, fid, optType)
+    
+    def onReal(self, stockCode, realType):
+        if realType == '주식체결':
+            signedTime = self.GetCommRealData(stockCode, fidDic.getFid('체결시간'))
+            close = self.GetCommRealData(stockCode, fidDic.getFid('현재가'))
+            open = self.GetCommRealData(stockCode, fidDic.getFid('시가'))
+            high = self.GetCommRealData(stockCode, fidDic.getFid('고가'))
+            low = self.GetCommRealData(stockCode, fidDic.getFid('저가'))
+            topSell = self.GetCommRealData(stockCode, fidDic.getFid('(최우선)매도호가'))
+            topBuy = self.GetCommRealData(stockCode, fidDic.getFid('(최우선)매수호가'))
+            volume = self.GetCommRealData(stockCode, fidDic.getFid('누적거래량'))
+
+            close = abs(int(close))
+            open = abs(int(open))
+            high = abs(int(high))
+            low = abs(int(low))
+            topSell = abs(int(topSell))
+            topBuy = abs(int(topBuy))
+            volume = abs(int(volume))
+
+            print([stockCode, signedTime, close, open, high, low, topSell, topBuy, volume])
+        else: pass
     
     def onResponse(self, screeno, rqname, trcode, rname, next):
         rowCnt = self.GetRepeatCnt(trcode, rqname)
@@ -102,8 +136,8 @@ class Kiwoom(QAxWidget):
             self.response = box
         
         self.el.exit()
-        time.sleep(1)
-    
+        time.sleep(1)        
+
     def getCandles(self, stockCode):
         self.SetInputValue('종목코드', stockCode)
         self.SetInputValue('수정주가구분', '1')
@@ -146,9 +180,48 @@ class Kiwoom(QAxWidget):
     def getStockName(self, stockCode):
         return self.GetMasterCodeName(stockCode)
     
+    def getDeposit(self):
+        self.SetInputValue('계좌번호', self.getAccNo())
+        self.SetInputValue('비밀번호입력매체구분', '00')
+        self.SetInputValue('조회구분', '2')
+        self.CommRqData('예수금', 'opw00001', 0, '0002')
+        self.el.exec()
+        return self.response
+    
+    def order(self, rqname, orderType, stockCode, quantity, price, gubun, orderNo=''):
+        return self.SendOrder(rqname, '0003', self.getAccNo(), 
+                              orderType, stockCode, quantity, price, gubun, orderNo)
+    
     def onMsg(self, screenno, rqname, trcode, msg):
         print(f'<{rqname}>: {msg}')
-
+    
+    def onAfterOrder(self, gubun, rowCnt, fids):
+        pass
+        # for fid in fids.split(';'):
+        #     val = self.GetChejanData(int(fid)).lstrip('+').lstrip('-')
+        #     if val.isdigit(): val = int(val)
+        #     try:
+        #         fidName = fidDic.FID_CODES[fid]
+        #         print(f'{fidName}: {val}')
+        #     except: pass
+    
+    def getOrder(self):
+        self.SetInputValue('계좌번호', self.getAccNo())
+        self.SetInputValue('전체종목구분', '0')
+        self.SetInputValue('체결구분', '0')
+        self.SetInputValue('매매구분', '0')
+        self.CommRqData('주문', 'opt10075', 0, '0004')
+        self.el.exec()
+        return self.response
+    
+    def getBalance(self):
+        self.SetInputValue('계좌번호', self.getAccNo())
+        self.SetInputValue('비밀번호입력매체구분', '00')
+        self.SetInputValue('조회구분', '1')
+        self.CommRqData('잔고', 'opw00018', 0, '0005')
+        self.el.exec()
+        return self.response
+    
     def buy(self, stockCode):
         candles = self.getCandles(stockCode)
 
@@ -158,7 +231,7 @@ class Kiwoom(QAxWidget):
 
             for i in range(len(candles) - 1):
                 a = list(candles.iloc[i])
-                b = candles.iloc[i+1, 0]
+                b = candles.iloc[i + 1, 0]
                 data.append(a)
                 target.append(b)
             
@@ -168,10 +241,39 @@ class Kiwoom(QAxWidget):
             rf = RandomForestRegressor(oob_score=True)
             rf.fit(data, target)
 
-            lastedCandle = list(candles.iloc[-1])
-            predictPrice = round(int(rf.predict([lastedCandle])[0]), -2)
+            lastCandle = list(candles.iloc[-1])
+            nextP = round(int(rf.predict([lastCandle])[0]), -2)
 
-            closePrice = int(candles.iloc[-1][0])
-            if closePrice < predictPrice:
-                stockName = self.getStockName(stockCode)
-                print(f'{stockName}: {closePrice} -> {predictPrice}원 추천합니다.')
+            closeP = int(candles.iloc[-1][0])
+            if nextP > closeP:
+                if self.getDeposit() > closeP:
+                    self.order('매수', 1, stockCode, 1, 0, '03')
+
+                    highP = round(int(closeP * closeP * 0.25), -2)
+                    if nextP > highP: nextP = highP
+                    self.best[stockCode] = nextP
+
+                    f = open('best.dat', 'wb')
+                    pickle.dump(self.best, f)
+                    f.close()
+    
+    def sell(self):
+        for stock in self.getBalance():
+            if stock[0] in self.best.keys():
+                self.order('매도', 2, stock[0], stock[7], self.best[stock[0]], '00')
+
+app = QApplication(sys.argv)
+kiwoom = Kiwoom()
+
+kiwoom
+
+kospi = kiwoom.getStockCodes('0')
+kosdaq = kiwoom.getStockCodes('10')
+
+for stockCode in kospi:
+    kiwoom.buy(stockCode)
+
+for stockCode in kosdaq:
+    kiwoom.buy(stockCode)
+
+app.exec()
