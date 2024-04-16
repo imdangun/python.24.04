@@ -13,7 +13,7 @@ class Kiwoom(QAxWidget):
         super().__init__()
         self.regKey()
         self.regHandlers()
-        self.login()        
+        self.login()
         try:
             f = open('best.dat', 'rb')
             self.best = pickle.load(f)
@@ -29,7 +29,7 @@ class Kiwoom(QAxWidget):
         self.OnReceiveTrData.connect(self.onResponse)
         self.OnReceiveMsg.connect(self.onMsg)
         self.OnReceiveChejanData.connect(self.onAfterOrder)
-        self.OnReceiveRealData.connect(self.onReal)
+        # self.OnReceiveRealData.connect(self.onReal)
     
     def setReal(self, screenno, stockCodes, fid, optType):
         self.SetRealReg(screenno, stockCodes, fid, optType)
@@ -149,13 +149,18 @@ class Kiwoom(QAxWidget):
         while self.isnext:
             self.SetInputValue('종목코드', stockCode)
             self.SetInputValue('수정주가구분', '1')
-            self.CommRqData('일봉', 'opt10081', 2, '0001')            
-            candles += self.response
-            time.sleep(1)
+            self.CommRqData('일봉', 'opt10081', 2, '0001')  
+            try:          
+                candles += self.response
+            except: pass
+            time.sleep(0.3)
         
-        df = pd.DataFrame(candles, columns=['date', 'close', 'open', 'high', 'low', 'volume']).set_index('date')
-        df = df.drop_duplicates()
-        df = df.sort_index()
+        df = pd.DataFrame()
+        try:
+            df = pd.DataFrame(candles, columns=['date', 'close', 'open', 'high', 'low', 'volume']).set_index('date')      
+            df = df.drop_duplicates()
+            df = df.sort_index()           
+        except: pass
         return df
     
     def onLogin(self, status):
@@ -234,8 +239,8 @@ class Kiwoom(QAxWidget):
                 b = candles.iloc[i + 1, 0]
                 data.append(a)
                 target.append(b)
-            
-            data = np.array(data)
+
+            data = np.array(data) 
             target = np.array(target)
 
             rf = RandomForestRegressor(oob_score=True)
@@ -243,19 +248,21 @@ class Kiwoom(QAxWidget):
 
             lastCandle = list(candles.iloc[-1])
             nextP = round(int(rf.predict([lastCandle])[0]), -2)
-
             closeP = int(candles.iloc[-1][0])
+
             if nextP > closeP:
-                if self.getDeposit() > closeP:
-                    self.order('매수', 1, stockCode, 1, 0, '03')
+                try:
+                    if self.getDeposit() > closeP:
+                        self.order('매수', 1, stockCode, 1, 0, '03')
 
-                    highP = round(int(closeP * closeP * 0.25), -2)
-                    if nextP > highP: nextP = highP
-                    self.best[stockCode] = nextP
+                        highP = round(int(closeP * closeP * 0.25), -2)
+                        if nextP > highP: nextP = highP
+                        self.best[stockCode] = nextP
 
-                    f = open('best.dat', 'wb')
-                    pickle.dump(self.best, f)
-                    f.close()
+                        f = open('best.dat', 'wb')
+                        pickle.dump(self.best, f)
+                        f.close()
+                except: pass
     
     def sell(self):
         for stock in self.getBalance():
@@ -265,7 +272,7 @@ class Kiwoom(QAxWidget):
 app = QApplication(sys.argv)
 kiwoom = Kiwoom()
 
-kiwoom
+kiwoom.sell()
 
 kospi = kiwoom.getStockCodes('0')
 kosdaq = kiwoom.getStockCodes('10')

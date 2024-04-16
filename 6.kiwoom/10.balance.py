@@ -114,13 +114,18 @@ class Kiwoom(QAxWidget):
         while self.isnext:
             self.SetInputValue('종목코드', stockCode)
             self.SetInputValue('수정주가구분', '1')
-            self.CommRqData('일봉', 'opt10081', 2, '0001')            
-            candles += self.response
-            time.sleep(1)
+            self.CommRqData('일봉', 'opt10081', 2, '0001')  
+            try:          
+                candles += self.response
+            except: pass
+            time.sleep(0.3)
         
-        df = pd.DataFrame(candles, columns=['date', 'close', 'open', 'high', 'low', 'volume']).set_index('date')
-        df = df.drop_duplicates()
-        df = df.sort_index()
+        df = pd.DataFrame()
+        try:
+            df = pd.DataFrame(candles, columns=['date', 'close', 'open', 'high', 'low', 'volume']).set_index('date')      
+            df = df.drop_duplicates()
+            df = df.sort_index()           
+        except: pass
         return df
     
     def onLogin(self, status):
