@@ -255,7 +255,7 @@ class Kiwoom(QAxWidget):
                     if self.getDeposit() > closeP:
                         self.order('매수', 1, stockCode, 1, 0, '03')
 
-                        highP = round(int(closeP * closeP * 0.25), -2)
+                        highP = round(int(closeP * closeP * 0.1), -2)
                         if nextP > highP: nextP = highP
                         self.best[stockCode] = nextP
 
